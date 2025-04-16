@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analyseur de Bulletins de Salaire</title>
+  <style>
+    /* Styles inchangés */
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Analyseur Intelligent de Bulletins de Salaire</h1>
+    <div class="upload-section">
+      <input type="file" id="pdfInput" accept="application/pdf" hidden="">
+      <button onclick="document.getElementById('pdfInput').click()">📁 Choisir un bulletin</button>
+      <p id="pdfPreviewText" style="display: block;">Fichier sélectionné : <strong id="fileName">Aucun fichier sélectionné</strong></p>
+      <div class="error" id="fileError"></div>
+      <div class="loading" id="loading" style="display: none;">Analyse en cours...</div>
+    </div>
+    <div class="form-grid">
+      <!-- Section Salaires -->
+      <div class="input-group">
+        <label>Salaire Brut (€)</label>
+        <input type="number" id="salaireBrut" readonly="">
+      </div>
+      <div class="input-group">
+        <label>Salaire Net (€)</label>
+        <input type="number" id="salaireNet" readonly="">
+      </div>
+      <!-- Section Cotisations -->
+      <div class="input-group">
+        <label>Cotisations Salariales (€)</label>
+        <input type="number" id="cotisationsSalariales" readonly="">
+      </div>
+      <div class="input-group">
+        <label>Cotisations Patronales (€)</label>
+        <input type="number" id="cotisationsPatronales" readonly="">
+      </div>
+      <!-- Section Taxes -->
+      <div class="input-group">
+        <label>CSG Déductible (€)</label>
+        <input type="number" id="csgDeductible" readonly="">
+      </div>
+      <div class="input-group">
+        <label>CSG Non Déductible (€)</label>
+        <input type="number" id="csgNonDeductible" readonly="">
+      </div>
+      <!-- Section Avantages -->
+      <div class="input-group">
+        <label>Congés Payés (€)</label>
+        <input type="number" id="congesPayes" readonly="">
+      </div>
+    </div>
+    <div class="resultats">
+      <h3>Synthèse Annuelle</h3>
+      <div class="result-item">
+        <span>Salaire Brut Annuel :</span>
+        <strong id="brutAnnuel">0,00&nbsp;€</strong>
+      </div>
+      <div class="result-item">
+        <span>Total Cotisations :</span>
+        <strong id="totalCotisations">0,00&nbsp;€</strong>
+      </div>
+      <div class="result-item">
+        <span>Net Imposable :</span>
+        <strong id="netImposable">0,00 €</strong>
+      </div>
+      <div class="result-item">
+        <span>Taux de Prélèvements :</span>
+        <strong id="tauxPrelevements">0%</strong>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+  <script>
+    const fieldMappings = {
+      salaireBrut: /SALAIRE\s+BRUT\s+MENSUEL\s+(\d+\.\d+)/i,
+      salaireNet: /NET\s+À\s+PAYER\s+EN\s+EUROS\s+(\d+\.\d+)/i,
+      cotisationsSalariales: /TOTAL\s+SALARIAL\s+(\d+\.\d+)/i,
+      cotisationsPatronales: /TOTAL\s+PAT\s*RONAL\s+(\d+\.\d+)/i,
+      csgDeductible: /CSG\s+déductible\s+(\d+\.\d+)/i,
+      csgNonDeductible: /CSG\/CRDS\s+non\s+déductible\s+(\d+\.\d+)/i,
+      congesPayes: /CONGÉS\s+PAYÉS\(10%\)\s+10%\s+(\d+\.\d+)/i // Regex ajustée
+    };
+
+    async function extractPDFData(file) {
+      try {
+        showLoading();
+        resetUI();
+        if (!file.type.includes('pdf')) throw new Error('Format de fichier invalide');
+        if (file.size > 5 * 1024 * 1024) throw new Error('Fichier trop volumineux (>5MB)');
+        const buffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+        let fullText = '';
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const content = await page.getTextContent();
+          fullText += content.items.map(item => item.str).join(' ');
+        }
+        processExtractedData(fullText);
+        updateFileName(file.name);
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    function processExtractedData(text) {
+      try {
+        const cleanText = text
+          .replace(/\s+/g, ' ') // Supprime les espaces multiples
+          .replace(/,/g, '.')  // Remplace les virgules par des points
+          .trim();
+
+        for (const [field, regex] of Object.entries(fieldMappings)) {
+          const match = cleanText.match(regex);
+          if (match && match[1]) {
+            const value = parseFloat(match[1].replace(/\s/g, '')); // Supprime les espaces restants
+            document.getElementById(field).value = value.toFixed(2);
+          }
+        }
+
+        calculateMonthlyAndAnnualValues();
+      } catch (error) {
+        showError('Erreur de traitement des données');
+      }
+    }
+
+    function calculateMonthlyAndAnnualValues() {
+      const brutMensuel = parseFloat(document.getElementById('salaireBrut').value) || 0;
+      const netMensuel = parseFloat(document.getElementById('salaireNet').value) || 0;
+      const cotisationsSalariales = parseFloat(document.getElementById('cotisationsSalariales').value) || 0;
+      const cotisationsPatronales = parseFloat(document.getElementById('cotisationsPatronales').value) || 0;
+      const csgDeductible = parseFloat(document.getElementById('csgDeductible').value) || 0;
+      const congesPayes = parseFloat(document.getElementById('congesPayes').value) || 0;
+
+      // Calculs mensuels
+      const netImposable = brutMensuel - csgDeductible;
+
+      // Calculs annuels
+      const brutAnnuel = brutMensuel * 12 + congesPayes; // Ajout des congés payés au brut annuel
+      const totalCotisations = (cotisationsSalariales + cotisationsPatronales) * 12;
+      const tauxPrelevements = ((totalCotisations / brutAnnuel) * 100 || 0).toFixed(1);
+
+      // Mise à jour des résultats
+      updateResult('brutAnnuel', brutAnnuel);
+      updateResult('totalCotisations', totalCotisations);
+      updateResult('netImposable', netImposable);
+      updateResult('tauxPrelevements', tauxPrelevements + '%');
+    }
+
+    function updateResult(elementId, value) {
+      const element = document.getElementById(elementId);
+      if (typeof value === 'number') {
+        element.textContent = value.toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: 'EUR',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+      } else {
+        element.textContent = value;
+      }
+    }
+
+    // Gestion de l'UI
+    function showLoading() {
+      document.getElementById('loading').style.display = 'block';
+    }
+    function hideLoading() {
+      document.getElementById('loading').style.display = 'none';
+    }
+    function showError(message) {
+      const errorDiv = document.getElementById('fileError');
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+      setTimeout(() => errorDiv.style.display = 'none', 5000);
+    }
+    function resetUI() {
+      document.querySelectorAll('input').forEach(input => input.value = '');
+      document.querySelectorAll('.result-item strong').forEach(el => el.textContent = '0,00 €');
+    }
+    function updateFileName(name) {
+      document.getElementById('fileName').textContent = name;
+      document.getElementById('pdfPreviewText').style.display = 'block';
+    }
+
+    // Événements
+    document.getElementById('pdfInput').addEventListener('change', (e) => {
+      if (e.target.files[0]) extractPDFData(e.target.files[0]);
+    });
+  </script>
+</body>
+</html>
